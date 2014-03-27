@@ -17,6 +17,8 @@ To create the full collated data for GZ: Quench:
 - Kyle Willett (willett@physics.umn.edu)
 
 29 Aug 2013 - corrected the decision tree, moving question 8 outside question 2 requirement.
+26 Mar 2014 - added pandas dataframe support; easier ability to remove duplicate classifications. 
+                Would like to reformat the whole rest of code to use dataframes when I have time.
 '''
 
 quenchdir = '/Users/willettk/Astronomy/Research/GalaxyZoo/quench/'
