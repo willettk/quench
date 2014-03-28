@@ -3,7 +3,8 @@ import csv
 import json
 import numpy as np
 import operator
-import pandas
+import pandas as pd
+from pymongo import MongoClient
 from astropy.io import fits as pyfits
 
 '''
@@ -32,6 +33,12 @@ def load_data():
     f.close()
 
     return a
+
+def load_df():
+
+    df = pd.DataFrame.from_csv('%s/%s' % (quenchdir,filename))
+
+    return df
 
 def data_reader():
 
@@ -101,7 +108,7 @@ def collate_answers(bysdss=False,drop_duplicates=True):
 
     # Load raw classifications from csv file
     #rows = load_data()
-    df = pandas.DataFrame.from_csv('%s/%s' % (quenchdir,filename))
+    df = load_df()
 
     # Empty list
     listcoll = []
@@ -116,6 +123,7 @@ def collate_answers(bysdss=False,drop_duplicates=True):
             keyid,keyind = subject_id,'subject_id'
 
         mr = df[(df[keyind] == keyid)].copy()
+
         # Sort by classification date, since we only keep the last one
         mr.sort(['created_at'])
 
@@ -126,11 +134,6 @@ def collate_answers(bysdss=False,drop_duplicates=True):
             unique_logged = mr[~anonymous_users].drop_duplicates('user_id', take_last=True)
             if anonymous_users.sum() > 0:
                 unique_logged.append(mr[anonymous_users])
-            '''
-            lendiff = len(mr) - len(unique_logged)
-            if lendiff > 0:
-                print 'Removed %i classifications for %s' % (lendiff,sdss_id)
-            '''
             mr = unique_logged
 
         for k in mr.columns[4:]:
@@ -144,6 +147,16 @@ def collate_answers(bysdss=False,drop_duplicates=True):
         listcoll.append((subject_id,sdss_id,collated))
 
     return listcoll
+
+def collated_df(listcoll):
+
+    listseries = []
+    for l in listcoll:
+        listseries.append(pd.Series((l[0],l[1],l[2]),index=['subject_id','sdss_id','collated']))
+
+    dfcoll = pd.DataFrame(listseries)
+
+    return dfcoll
 
 def dict_to_str(gzq_dict):
 
@@ -671,4 +684,41 @@ def count_duplicate_user_classifications():
             dupcount.append(uc - uu)
 
     return dupcount
+
+def load_mongo_data():
+
+    # Connect to Mongo database
+    # Make sure to run mongorestore /path/to/database to restore the updated files
+    # mongod client must be running locally
+    
+    client = MongoClient('localhost', 27017)
+    db = client['ouroboros'] 
+    
+    subjects = db['galaxy_zoo_starburst_subjects'] 		# subjects = images
+    classifications = db['galaxy_zoo_starburst_classifications']	# classifications = classifications of each subject per user
+    users = db['galaxy_zoo_starburst_users']	# volunteers doing each classification (can be anonymous)
+
+    return subjects,classifications,users
+
+def duplicate_zooniverse_ids(dfcoll):
+
+    subjects,classifications,users = load_mongo_data()
+    
+    dups = dfcoll['sdss_id'][dfcoll['sdss_id'].duplicated()]
+
+    for d in dups:
+        s = subjects.find({'metadata.sdss_id':d})
+        dfs = pd.DataFrame(list(s))
+        for z in dfs['zooniverse_id']:
+            zc = pd.DataFrame(list(classifications.find({'subjects.zooniverse_id':z})))
+            firstclass = zc['created_at'][zc.index[0]]
+            lastclass = zc['created_at'][zc.index[-1]]
+            td = (lastclass - firstclass)
+            print '%s (%s) was created over a period of %02i days (%s to %s))' % (d,z,td.days,firstclass,lastclass)
+
+        print '---------------------------'
+
+    return None
+
+
 
