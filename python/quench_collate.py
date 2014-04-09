@@ -15,11 +15,14 @@ To create the full collated data for GZ: Quench:
 >>> import quench_collate as qc
 >>> listcoll = qc.collate_answers()
 >>> qc.write_fits(listcoll)
->>> qc.write_csv(listcoll)
 
-After writing out the CSV or FITS files, open them in TOPCAT and match them against the final list
-of galaxies that Laura provided. 
+After writing out the FITS file, open it in TOPCAT and match it against the final list
+of sample and control galaxies that Laura provided. 
 
+Match on SDSS objid against finalpush/control_091113.csv and finalpush/sample_091113.csv 
+These files contain the metadata and serve as the master list for "galaxies to include".
+
+Output as FITS and CSV files from TOPCAT
 
 Timeline:
 
@@ -70,13 +73,13 @@ def unique_subjects():
 
     column = data_reader()
 
-    subjects = set(column['subject_id'])
+    usubjects = set(column['subject_id'])
 
     sdss = []
-    for sub in subjects:
+    for sub in usubjects:
         sdss.append(column['sdss_id'][column['subject_id'].index(sub)])
 
-    return subjects,sdss
+    return usubjects,sdss
 
 def unique_sdss():
 
@@ -84,11 +87,11 @@ def unique_sdss():
 
     sdss = set(column['sdss_id'])
 
-    subjects = []
+    usubjects = []
     for s in sdss:
-        subjects.append(column['subject_id'][column['sdss_id'].index(s)])
+        usubjects.append(column['subject_id'][column['sdss_id'].index(s)])
 
-    return subjects,sdss
+    return usubjects,sdss
 
 def colldict():
 
@@ -112,9 +115,9 @@ def collate_answers(bysdss=False,drop_duplicates=True,first20=True):
 
     # Decide whether sorting answers by SDSS ID or by Zooniverse subject ID
     if bysdss:
-        subjects,sdss = unique_sdss()
+        usubjects,sdss = unique_sdss()
     else:
-        subjects,sdss = unique_subjects()
+        usubjects,sdss = unique_subjects()
 
     # Load raw classifications from csv file
     #rows = load_data()
@@ -124,7 +127,7 @@ def collate_answers(bysdss=False,drop_duplicates=True,first20=True):
     listcoll = []
 
     # Loop over all unique subjects
-    for subject_id,sdss_id in zip(subjects,sdss):
+    for subject_id,sdss_id in zip(usubjects,sdss):
         # Empty dictionary of tasks
         collated = colldict()
         if bysdss:
@@ -161,7 +164,31 @@ def collate_answers(bysdss=False,drop_duplicates=True,first20=True):
         # Append the IDs and collated dictionary with task counts to list
         listcoll.append((subject_id,sdss_id,collated))
 
-    return listcoll
+    # Remove known bad galaxies
+    listcoll_good = remove_bad(listcoll)
+
+    return listcoll_good
+
+def remove_bad(listcoll,verbose=True,bysdss=False):
+
+    subjects, classifications, users = load_mongo_data()
+    bad_zooniverseids = ('AGS00004n1', 'AGS00004cv', 'AGS00004c5', 'AGS00004mc', 'AGS00004c3', 'AGS00004ho', 'AGS00004gs', 'AGS00002w0', 'AGS00003w2', 'AGS00003b8', 'AGS00002wy', 'AGS00003tr', 'AGS00003c2', 'AGS0000449', 'AGS00003ll', 'AGS00003h9', 'AGS00002p1', 'AGS00003tg', 'AGS00002xx', 'AGS00003tu', 'AGS00002z3', 'AGS00002qc', 'AGS00003dj', 'AGS00003is', 'AGS00003xd', 'AGS00003wr', 'AGS00002v5', 'AGS00003xw', 'AGS00003e3', 'AGS00002i4')
+
+    bad_subjectids = [str(subjects.find_one({'zooniverse_id':bz},{'_id':1})['_id']) for bz in bad_zooniverseids]
+
+    listcoll_all = list(listcoll)
+
+    n_removed = 0
+    for l in listcoll_all:
+        if l[0] in bad_subjectids:
+            listcoll_all.remove(l)
+            n_removed += 1
+
+    if verbose:
+        suffix = 'y' if n_removed == 1 else 'ies'
+        print 'Removed %i bad galax%s from listcoll' % (n_removed,suffix)
+
+    return listcoll_all
 
 def collated_df(listcoll):
 
@@ -304,6 +331,8 @@ def write_fits(listcoll,bysdss=False):
     filestub = '_bysdss' if bysdss else '_bysubject'
     writefilename = 'consensus/gzquench_consensus%s.fits' % filestub
 
+    answer_dict = answers()
+
     subject_id = []
     sdss_id = []
     total_votes = []
@@ -332,12 +361,25 @@ def write_fits(listcoll,bysdss=False):
     t10_a00_fraction,t10_a01_fraction= [],[]
     t11_a00_count,t11_a01_count= [],[]
     t11_a00_fraction,t11_a01_fraction= [],[]
+    t00_label = []
+    t01_label = []
+    t02_label = []
+    t03_label = []
+    t04_label = []
+    t05_label = []
+    t06_label = []
+    t07_label = []
+    t08_label = []
+    t09_label = []
+    t10_label = []
+    t11_label = []
 
     for l in listcoll:
         subject_id.append(l[0])
         sdss_id.append(l[1])
         total_votes.append(np.sum(l[2]['mini_project-0'].values()))
-        mostcommonpath.append(quench_tree(l[2]))
+        mcp = quench_tree(l[2])
+        mostcommonpath.append(mcp)
         t00_count = np.sum(l[2]['mini_project-0'].values()).astype(float)
         t01_count = np.sum(l[2]['mini_project-1'].values()).astype(float)
         t02_count = np.sum(l[2]['mini_project-2'].values()).astype(float)
@@ -412,6 +454,18 @@ def write_fits(listcoll,bysdss=False):
         t11_a01_count.append(l[2]['mini_project-11']['a-1'])
         t11_a00_fraction.append(l[2]['mini_project-11']['a-0']/t11_count if t11_count > 0. else 0.)
         t11_a01_fraction.append(l[2]['mini_project-11']['a-1']/t11_count if t11_count > 0. else 0.)
+        t00_label.append(answer_dict[mcp[mcp.find('s0a'):mcp.find('s0a')+4]] if mcp.find('s0a') >= 0 else '')
+        t01_label.append(answer_dict[mcp[mcp.find('s1a'):mcp.find('s1a')+4]] if mcp.find('s1a') >= 0 else '')
+        t02_label.append(answer_dict[mcp[mcp.find('s2a'):mcp.find('s2a')+4]] if mcp.find('s2a') >= 0 else '')
+        t03_label.append(answer_dict[mcp[mcp.find('s3a'):mcp.find('s3a')+4]] if mcp.find('s3a') >= 0 else '')
+        t04_label.append(answer_dict[mcp[mcp.find('s4a'):mcp.find('s4a')+4]] if mcp.find('s4a') >= 0 else '')
+        t05_label.append(answer_dict[mcp[mcp.find('s5a'):mcp.find('s5a')+4]] if mcp.find('s5a') >= 0 else '')
+        t06_label.append(answer_dict[mcp[mcp.find('s6a'):mcp.find('s6a')+4]] if mcp.find('s6a') >= 0 else '')
+        t07_label.append(answer_dict[mcp[mcp.find('s7a'):mcp.find('s7a')+4]] if mcp.find('s7a') >= 0 else '')
+        t08_label.append(answer_dict[mcp[mcp.find('s8a'):mcp.find('s8a')+4]] if mcp.find('s8a') >= 0 else '')
+        t09_label.append(answer_dict[mcp[mcp.find('s9a'):mcp.find('s9a')+4]] if mcp.find('s9a') >= 0 else '')
+        t10_label.append(answer_dict[mcp[mcp.find('s10a'):mcp.find('s10a')+5]] if mcp.find('s10a') >= 0 else '')
+        t11_label.append(answer_dict[mcp[mcp.find('s11a'):mcp.find('s11a')+5]] if mcp.find('s11a') >= 0 else '')
 
     col_subject_id = pyfits.Column(name = 'subject_id', format='A24', array=subject_id)
     col_sdss_id = pyfits.Column(name = 'sdss_id', format='K', array=sdss_id)
@@ -479,6 +533,18 @@ def write_fits(listcoll,bysdss=False):
     col_t11_a01_count = pyfits.Column(name = 't11_a01_count', format='I4', array=t11_a01_count)
     col_t11_a00_fraction = pyfits.Column(name = 't11_a00_fraction', format='E5.3', array=t11_a00_fraction)
     col_t11_a01_fraction = pyfits.Column(name = 't11_a01_fraction', format='E5.3', array=t11_a01_fraction)
+    col_t00_label = pyfits.Column(name='t00_label', format='A50', array=t00_label)
+    col_t01_label = pyfits.Column(name='t01_label', format='A50', array=t01_label)
+    col_t02_label = pyfits.Column(name='t02_label', format='A50', array=t02_label)
+    col_t03_label = pyfits.Column(name='t03_label', format='A50', array=t03_label)
+    col_t04_label = pyfits.Column(name='t04_label', format='A50', array=t04_label)
+    col_t05_label = pyfits.Column(name='t05_label', format='A50', array=t05_label)
+    col_t06_label = pyfits.Column(name='t06_label', format='A50', array=t06_label)
+    col_t07_label = pyfits.Column(name='t07_label', format='A50', array=t07_label)
+    col_t08_label = pyfits.Column(name='t08_label', format='A50', array=t08_label)
+    col_t09_label = pyfits.Column(name='t09_label', format='A50', array=t09_label)
+    col_t10_label = pyfits.Column(name='t10_label', format='A50', array=t10_label)
+    col_t11_label = pyfits.Column(name='t11_label', format='A50', array=t11_label)
 
     primary_hdu = pyfits.PrimaryHDU()
     hdulist = pyfits.HDUList([primary_hdu])
@@ -488,6 +554,18 @@ def write_fits(listcoll,bysdss=False):
                                 col_sdss_id,  
                                 col_total_votes,
                                 col_mostcommonpath,
+                                col_t00_label,
+                                col_t01_label,
+                                col_t02_label,
+                                col_t03_label,
+                                col_t04_label,
+                                col_t05_label,
+                                col_t06_label,
+                                col_t07_label,
+                                col_t08_label,
+                                col_t09_label,
+                                col_t10_label,
+                                col_t11_label,
                                 col_t00_a00_count,
                                 col_t00_a01_count,
                                 col_t00_a02_count,
@@ -680,9 +758,9 @@ def mcp_to_english(mcp):
 def find_duplicates():
 
     cols = data_reader()
-    subjects,sdss = unique_subjects()
+    usubjects,sdss = unique_subjects()
 
-    for s in subjects:
+    for s in usubjects:
         smatch=[]  
         for idx,si in enumerate(cols['subject_id']):
             if si == s:
@@ -722,7 +800,7 @@ def mergers_new(listcoll):
 
 def count_duplicate_user_classifications():
 
-    subjects,sdss = unique_sdss()
+    usubjects,sdss = unique_sdss()
 
     rows = load_data()
 
