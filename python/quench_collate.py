@@ -10,20 +10,6 @@ from astropy.io import fits as pyfits
 '''
 By Kyle Willett (willett@physics.umn.edu)
 
-To create the full collated data for GZ: Quench:
-
->>> import quench_collate as qc
->>> listcoll = qc.collate_answers()
->>> qc.write_fits(listcoll)
-
-After writing out the FITS file, open it in TOPCAT and match it against the final list
-of sample and control galaxies that Laura provided. 
-
-Match on SDSS objid against finalpush/control_091113.csv and finalpush/sample_091113.csv 
-These files contain the metadata and serve as the master list for "galaxies to include".
-
-Output as FITS and CSV files from TOPCAT
-
 Timeline:
 
 29 Aug 2013 - corrected the decision tree, moving question 8 outside question 2 requirement.
