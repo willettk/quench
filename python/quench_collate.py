@@ -8,6 +8,8 @@ from pymongo import MongoClient
 from astropy.io import fits as pyfits
 
 '''
+By Kyle Willett (willett@physics.umn.edu)
+
 To create the full collated data for GZ: Quench:
 
 >>> import quench_collate as qc
@@ -15,20 +17,28 @@ To create the full collated data for GZ: Quench:
 >>> qc.write_fits(listcoll)
 >>> qc.write_csv(listcoll)
 
-- Kyle Willett (willett@physics.umn.edu)
+After writing out the CSV or FITS files, open them in TOPCAT and match them against the final list
+of galaxies that Laura provided. 
+
+
+Timeline:
 
 29 Aug 2013 - corrected the decision tree, moving question 8 outside question 2 requirement.
 26 Mar 2014 - added pandas dataframe support; easier ability to remove duplicate classifications. 
                 Would like to reformat the whole rest of code to use dataframes when I have time.
+08 Apr 2014 - guiding principle should be that we use the first 20 votes for all galaxies. These
+                include both ones that had 40 total votes and those that had double Zooniverse IDs
+                for a single SDSS object. Also need to deal with the single aberration of AGS00004cy
+                and AGS00004n1
 '''
 
 quenchdir = '/Users/willettk/Astronomy/Research/GalaxyZoo/quench/'
-writedir = '%s/quench_for_volunteers' % quenchdir
+csvdir = '%s/csv/' % quenchdir
 filename = '2013-08-29_galaxy_zoo_starburst_classifications.csv'
 
 def load_data():
 
-    f = open(quenchdir+filename,'rb')
+    f = open(csvdir+filename,'rb')
     a = f.readlines()
     f.close()
 
@@ -36,13 +46,13 @@ def load_data():
 
 def load_df():
 
-    df = pd.DataFrame.from_csv('%s/%s' % (quenchdir,filename))
+    df = pd.DataFrame.from_csv('%s/%s' % (csvdir,filename))
 
     return df
 
 def data_reader():
 
-    f = open(quenchdir+filename,'rb')
+    f = open(csvdir+filename,'rb')
     reader = csv.reader(f)
     headers = reader.next()
     column = {}
@@ -98,7 +108,7 @@ def colldict():
 
     return collated
 
-def collate_answers(bysdss=False,drop_duplicates=True):
+def collate_answers(bysdss=False,drop_duplicates=True,first20=True):
 
     # Decide whether sorting answers by SDSS ID or by Zooniverse subject ID
     if bysdss:
@@ -125,7 +135,7 @@ def collate_answers(bysdss=False,drop_duplicates=True):
         mr = df[(df[keyind] == keyid)].copy()
 
         # Sort by classification date, since we only keep the last one
-        mr.sort(['created_at'])
+        mr.sort(['created_at'],inplace=True)
 
         if drop_duplicates:
             # Users who weren't logged in have no user_id. Assume that they actually were
@@ -136,6 +146,11 @@ def collate_answers(bysdss=False,drop_duplicates=True):
                 unique_logged.append(mr[anonymous_users])
             mr = unique_logged
 
+        # Keep only the first 20 votes for a classification
+        if first20:
+            mr = mr[:20]
+
+        # Copy the votes for each task into dictionary
         for k in mr.columns[4:]:
             tc = mr.copy()[k].dropna()
             vc = tc.value_counts()
@@ -581,7 +596,7 @@ def quench_tree(gal):
             # Edge-on disk
             if s2_max == 'a-0':
                 # Edge on bulge
-                s3_max = max_item(gal['mini_project-8'])
+                s3_max = max_item(gal['mini_project-3'])
                 char += 's3%s;' % re.sub('-','',str(s3_max))
             # Not edge-on disk
             else:
@@ -613,6 +628,54 @@ def quench_tree(gal):
         char += 's11%s;' % re.sub('-','',str(s11_max))
 
     return char
+
+def answers():
+
+    answer_dict={"s0a0":"Smooth",
+        "s0a1":"Features or disk",
+        "s0a2":"Star or artifact",
+        "s1a0":"Completely round",
+        "s1a1":"In between",
+        "s1a2":"Cigar shaped",
+        "s2a0":"Edge-on disk",
+        "s2a1":"Face-on disk",
+        "s3a0":"Bulge",
+        "s3a1":"No bulge",
+        "s4a0":"Bar",
+        "s4a1":"No bar",
+        "s5a0":"Spiral",
+        "s5a1":"No spiral",
+        "s6a0":"Tight arms",
+        "s6a1":"Medium arms",
+        "s6a2":"Loose arms",
+        "s7a0":"No bulge",
+        "s7a1":"Obvious bulge",
+        "s7a2":"Dominant bulge",
+        "s8a0":"1 off center clump",
+        "s8a1":"More than 1 off center clump",
+        "s8a2":"No off center clumps",
+        "s9a0":"Merging",
+        "s9a1":"Tidal debris",
+        "s9a2":"Merging and tidal debris",
+        "s9a3":"Neither merging nor tidal debris",
+        "s10a0":"Symmetrical",
+        "s10a1":"Not symmetrical",
+        "s11a0":"Discuss it",
+        "s11a1":"Don't discuss"}
+
+    return answer_dict
+    
+def mcp_to_english(mcp):
+
+    answer_dict = answers()
+
+    mcp_split = mcp.split(';')
+    mcp_english = ''
+    # Skip final question (discuss/don't discuss)
+    for m in mcp_split[:-2]:
+        mcp_english += answer_dict[m]+', '
+
+    return mcp_english[:-2]
 
 def find_duplicates():
 
@@ -700,11 +763,13 @@ def load_mongo_data():
 
     return subjects,classifications,users
 
-def duplicate_zooniverse_ids(dfcoll):
+def duplicate_zooniverse_ids(dfcoll,verbose=True):
 
     subjects,classifications,users = load_mongo_data()
     
     dups = dfcoll['sdss_id'][dfcoll['sdss_id'].duplicated()]
+
+    dlist = []
 
     for d in dups:
         s = subjects.find({'metadata.sdss_id':d})
@@ -714,11 +779,39 @@ def duplicate_zooniverse_ids(dfcoll):
             firstclass = zc['created_at'][zc.index[0]]
             lastclass = zc['created_at'][zc.index[-1]]
             td = (lastclass - firstclass)
-            print '%s (%s) was created over a period of %02i days (%s to %s))' % (d,z,td.days,firstclass,lastclass)
+            if verbose:
+                print '%s (%s) was created over a period of %02i days (%s to %s))' % (d,z,td.days,firstclass,lastclass)
+            dlist.append(z)
 
-        print '---------------------------'
+        if verbose:
+            print '---------------------------'
 
+    dpairs = (np.array(dlist)).reshape((len(dlist)/2,2))
+
+    return dpairs
+
+def show_boost_duplicates(dfcoll):
+
+    first_set = dfcoll[dfcoll['sdss_id'].duplicated(take_last=False)]
+    last_set = dfcoll[dfcoll['sdss_id'].duplicated(take_last=True)]
+
+    merged = pd.merge(first_set,last_set,on='sdss_id',suffixes=['_first','_last'])
+
+    samecount = 0
+
+    for count, m in merged.iterrows():
+        fc =  quench_tree(m['collated_first'])
+        lc =  quench_tree(m['collated_last'])
+        print '\n%s' % m['sdss_id']
+        if fc == lc:
+            print 'Same result: %s' % mcp_to_english(fc)
+            samecount += 1
+        else:
+            print 'Different result'
+            print 'First classification: %s' % mcp_to_english(fc)
+            print 'Last  classification: %s' % mcp_to_english(lc)
+
+    print '%i galaxies; %i same, %i different' % (len(merged),samecount,len(merged)-samecount)
+    
     return None
-
-
 
